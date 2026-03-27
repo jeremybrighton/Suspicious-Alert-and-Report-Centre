@@ -24,7 +24,18 @@ import type {
   InstitutionStatus,
 } from '@/types';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://financial-intelligence-processing-system.onrender.com/api/v1';
+// Use the Next.js rewrite proxy when running in the browser to avoid CORS.
+// The proxy route /api/backend/* forwards server-side to Render.
+// In local dev or server-side, use the direct backend URL.
+function getBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    // Browser: route through Next.js rewrite proxy (avoids CORS entirely)
+    return '/api/backend';
+  }
+  // Server-side / local: direct URL
+  return process.env.NEXT_PUBLIC_API_URL ||
+    'https://financial-intelligence-processing-system.onrender.com/api/v1';
+}
 
 // ─── Token Management ─────────────────────────────────────────────────────────
 
@@ -73,7 +84,7 @@ async function apiFetch<T>(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${BASE_URL}${path}`, {
+  const response = await fetch(`${getBaseUrl()}${path}`, {
     ...options,
     headers,
   });
@@ -150,7 +161,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
   if (demoUser && DEMO_PASSWORDS[email.toLowerCase()] === password) {
     try {
       // Try real backend first
-      const res = await fetch(`${BASE_URL}/auth/login`, {
+      const res = await fetch(`${getBaseUrl()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -167,7 +178,7 @@ export async function login(email: string, password: string): Promise<LoginRespo
   }
 
   // ── Real backend login ──
-  const res = await fetch(`${BASE_URL}/auth/login`, {
+  const res = await fetch(`${getBaseUrl()}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
