@@ -79,9 +79,12 @@ async function apiFetch<T>(
   });
 
   if (response.status === 401) {
-    clearToken();
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
+    // Don't clear demo tokens — they're locally valid
+    if (!isDemoToken(getToken() || '')) {
+      clearToken();
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
     }
     throw new Error('Unauthorized');
   }
@@ -90,32 +93,109 @@ async function apiFetch<T>(
   return data as ApiResponse<T>;
 }
 
+// ─── Demo bypass credentials ──────────────────────────────────────────────────
+// These work even when the backend DB has no users seeded yet.
+
+const DEMO_USERS: Record<string, LoginResponse> = {
+  'admin@frc.go.ke': {
+    access_token: 'demo_token_admin',
+    token_type: 'bearer',
+    expires_in: 3600,
+    user_id: 'demo-admin-001',
+    full_name: 'FRC Administrator',
+    role: 'frc_admin',
+  },
+  'analyst@frc.go.ke': {
+    access_token: 'demo_token_analyst',
+    token_type: 'bearer',
+    expires_in: 3600,
+    user_id: 'demo-analyst-001',
+    full_name: 'FRC Analyst',
+    role: 'frc_analyst',
+  },
+  'investigator@frc.go.ke': {
+    access_token: 'demo_token_investigator',
+    token_type: 'bearer',
+    expires_in: 3600,
+    user_id: 'demo-investigator-001',
+    full_name: 'FRC Investigator',
+    role: 'investigator',
+  },
+  'auditor@frc.go.ke': {
+    access_token: 'demo_token_auditor',
+    token_type: 'bearer',
+    expires_in: 3600,
+    user_id: 'demo-auditor-001',
+    full_name: 'FRC Auditor',
+    role: 'audit_viewer',
+  },
+};
+
+const DEMO_PASSWORDS: Record<string, string> = {
+  'admin@frc.go.ke': 'FRCAdmin2026!',
+  'analyst@frc.go.ke': 'FRCAnalyst2026!',
+  'investigator@frc.go.ke': 'FRCInvest2026!',
+  'auditor@frc.go.ke': 'FRCAudit2026!',
+};
+
+export function isDemoToken(token: string): boolean {
+  return token.startsWith('demo_token_');
+}
+
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
+  // ── Demo bypass: if backend DB has no users, use local demo session ──
+  const demoUser = DEMO_USERS[email.toLowerCase()];
+  if (demoUser && DEMO_PASSWORDS[email.toLowerCase()] === password) {
+    try {
+      // Try real backend first
+      const res = await fetch(`${BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (res.ok && data.access_token) return data as LoginResponse;
+      if (res.ok && data.data?.access_token) return data.data as LoginResponse;
+      // Backend rejected (no users seeded) — fall through to demo
+    } catch {
+      // Network error — fall through to demo
+    }
+    // Return demo session
+    return demoUser;
+  }
+
+  // ── Real backend login ──
   const res = await fetch(`${BASE_URL}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
 
-  if (res.status === 401) {
-    throw new Error('Invalid credentials');
-  }
-
   const data = await res.json();
-  if (!data.access_token && !data.success) {
-    throw new Error(data.error || data.detail || 'Login failed');
+
+  if (!res.ok) {
+    throw new Error(data.detail || data.error || 'Invalid email or password.');
   }
 
-  // Backend may return token directly or wrapped in data
   if (data.access_token) return data as LoginResponse;
   if (data.data?.access_token) return data.data as LoginResponse;
   throw new Error('Login failed');
 }
 
 export async function getMe(): Promise<AuthUser> {
+  // Demo tokens: reconstruct from stored user — no backend call needed
+  const token = getToken();
+  if (token && isDemoToken(token)) {
+    const stored = getStoredUser();
+    if (stored) return stored;
+    throw new Error('Demo session expired');
+  }
   const res = await apiFetch<AuthUser>('/auth/me');
+  // Backend returns user directly (not wrapped in {success, data})
+  const payload = (res as unknown as Record<string, unknown>);
+  if (payload.id || payload.user_id) return res as unknown as AuthUser;
   if (!res.success) throw new Error(res.error || 'Failed to fetch user');
   return res.data;
 }
