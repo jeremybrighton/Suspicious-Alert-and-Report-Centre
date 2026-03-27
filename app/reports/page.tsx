@@ -1,0 +1,364 @@
+'use client';
+
+import { useEffect, useState, useCallback, Suspense } from 'react';
+import Link from 'next/link';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Plus, ArrowRight, FileText } from 'lucide-react';
+import AppLayout from '@/components/layout/AppLayout';
+import { PageLoader } from '@/components/ui/Spinner';
+import ErrorState from '@/components/ui/ErrorState';
+import EmptyState from '@/components/ui/EmptyState';
+import { ReportStatusBadge } from '@/components/ui/Badge';
+import Pagination from '@/components/ui/Pagination';
+import Modal from '@/components/ui/Modal';
+import { getReports, createReport, getLegalRules } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import type { Report, ReportType, CreateReportBody, LegalRule } from '@/types';
+
+const REPORT_TYPES: { value: ReportType; label: string }[] = [
+  { value: 'str', label: 'Suspicious Transaction Report (STR)' },
+  { value: 'ctr', label: 'Cash Transaction Report (CTR)' },
+  { value: 'sar', label: 'Suspicious Activity Report (SAR)' },
+  { value: 'cross_border', label: 'Cross-Border Case Report' },
+  { value: 'sanctions_freeze', label: 'Sanctions Freeze Report' },
+  { value: 'terrorism_financing', label: 'Terrorism Financing Report' },
+  { value: 'corruption', label: 'Corruption / Economic Crime Report' },
+  { value: 'other', label: 'Other' },
+];
+
+const STATUS_OPTIONS = ['draft', 'under_review', 'finalised', 'sent'];
+
+const DESTINATION_BODIES = ['FRC', 'DCI', 'KRA', 'CBK', 'EACC', 'NIS', 'ARA', 'ANTI_TERROR', 'EGMONT', 'CUSTOMS', 'COMMITTEE', 'OTHER'];
+
+const INITIAL_FORM: CreateReportBody = {
+  frc_case_id: '',
+  report_type: 'str',
+  title: '',
+  summary: '',
+  content: '',
+  destination: '',
+  legal_basis: '',
+  legal_rule_ids: [],
+};
+
+function ReportsPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const { hasRole } = useAuth();
+  const canCreate = hasRole(['frc_admin', 'frc_analyst']);
+
+  const [reports, setReports] = useState<Report[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [formData, setFormData] = useState<CreateReportBody>(INITIAL_FORM);
+  const [isCreating, setIsCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [legalRules, setLegalRules] = useState<LegalRule[]>([]);
+
+  const page = Number(searchParams.get('page') || 1);
+  const statusFilter = searchParams.get('status') || '';
+  const caseIdFilter = searchParams.get('frc_case_id') || '';
+
+  const loadReports = useCallback(async () => {
+    setIsLoading(true);
+    setError('');
+    try {
+      const data = await getReports({
+        status: statusFilter || undefined,
+        frc_case_id: caseIdFilter || undefined,
+        page,
+        page_size: 20,
+      });
+      const list = data.reports || data.items || [];
+      setReports(list);
+      setTotal(data.total || 0);
+      setTotalPages(data.total_pages || 1);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load reports');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [statusFilter, caseIdFilter, page]);
+
+  useEffect(() => {
+    loadReports();
+  }, [loadReports]);
+
+  useEffect(() => {
+    if (createModalOpen) {
+      getLegalRules({ page: 1, page_size: 100 })
+        .then((d) => setLegalRules(d.rules || d.items || []))
+        .catch(() => {});
+      // Pre-fill case ID from URL
+      if (caseIdFilter) setFormData((f) => ({ ...f, frc_case_id: caseIdFilter }));
+    }
+  }, [createModalOpen, caseIdFilter]);
+
+  const updateParam = (key: string, value: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value) params.set(key, value); else params.delete(key);
+    params.delete('page');
+    router.push(`/reports?${params.toString()}`);
+  };
+
+  const handleCreate = async () => {
+    if (!formData.frc_case_id || !formData.title || !formData.summary) {
+      setCreateError('Case ID, title, and summary are required.');
+      return;
+    }
+    setIsCreating(true);
+    setCreateError('');
+    try {
+      await createReport(formData);
+      setCreateModalOpen(false);
+      setFormData(INITIAL_FORM);
+      loadReports();
+    } catch (err: unknown) {
+      setCreateError(err instanceof Error ? err.message : 'Failed to create report');
+    } finally {
+      setIsCreating(false);
+    }
+  };
+
+  const toggleLegalRule = (ruleCode: string) => {
+    setFormData((f) => ({
+      ...f,
+      legal_rule_ids: f.legal_rule_ids?.includes(ruleCode)
+        ? f.legal_rule_ids.filter((r) => r !== ruleCode)
+        : [...(f.legal_rule_ids || []), ruleCode],
+    }));
+  };
+
+  return (
+    <AppLayout title="Reports" subtitle="Intelligence reports generated by FRC analysts">
+      <div className="space-y-5">
+        {/* Filters + Create */}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={statusFilter}
+              onChange={(e) => updateParam('status', e.target.value)}
+              className="bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+            >
+              <option value="">All Statuses</option>
+              {STATUS_OPTIONS.map((s) => (
+                <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
+              ))}
+            </select>
+            {caseIdFilter && (
+              <div className="flex items-center gap-2 bg-cyan-600/20 border border-cyan-600/30 rounded-lg px-3 py-1.5">
+                <span className="text-xs text-cyan-400 font-mono">Case: {caseIdFilter}</span>
+                <button onClick={() => updateParam('frc_case_id', '')} className="text-cyan-400 hover:text-white text-xs">✕</button>
+              </div>
+            )}
+          </div>
+          {canCreate && (
+            <button
+              onClick={() => setCreateModalOpen(true)}
+              className="flex items-center gap-2 px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-all"
+            >
+              <Plus size={15} /> Create Report
+            </button>
+          )}
+        </div>
+
+        {isLoading ? (
+          <PageLoader />
+        ) : error ? (
+          <ErrorState message={error} onRetry={loadReports} />
+        ) : reports.length === 0 ? (
+          <EmptyState title="No reports found" description="No reports match your current filters." />
+        ) : (
+          <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-slate-800">
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-5 py-3">Report</th>
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-5 py-3 hidden md:table-cell">Case ID</th>
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-5 py-3 hidden lg:table-cell">Type</th>
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-5 py-3">Status</th>
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-5 py-3 hidden xl:table-cell">Destination</th>
+                    <th className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider px-5 py-3 hidden xl:table-cell">Date</th>
+                    <th className="px-5 py-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {reports.map((r) => (
+                    <tr key={r.report_id} className="hover:bg-slate-800/40 transition-colors">
+                      <td className="px-5 py-4">
+                        <div className="flex items-center gap-2.5">
+                          <div className="h-8 w-8 rounded-lg bg-purple-500/15 flex items-center justify-center flex-shrink-0">
+                            <FileText size={14} className="text-purple-400" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-slate-200 text-sm font-medium truncate max-w-xs">{r.title}</p>
+                            <p className="text-slate-500 font-mono text-xs">{r.report_id}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-5 py-4 hidden md:table-cell">
+                        <Link href={`/cases/${r.frc_case_id}`} className="text-cyan-400 font-mono text-sm hover:text-cyan-300 transition-colors">
+                          {r.frc_case_id}
+                        </Link>
+                      </td>
+                      <td className="px-5 py-4 hidden lg:table-cell">
+                        <span className="text-slate-300 text-sm uppercase">{r.report_type}</span>
+                      </td>
+                      <td className="px-5 py-4">
+                        <ReportStatusBadge status={r.status} />
+                      </td>
+                      <td className="px-5 py-4 hidden xl:table-cell">
+                        <span className="text-slate-400 text-sm">{r.destination || '—'}</span>
+                      </td>
+                      <td className="px-5 py-4 text-slate-400 text-sm hidden xl:table-cell whitespace-nowrap">
+                        {new Date(r.created_at).toLocaleDateString('en-KE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td className="px-5 py-4">
+                        <Link href={`/reports/${r.report_id}`} className="flex items-center gap-1 text-xs text-cyan-400 hover:text-cyan-300 transition-colors whitespace-nowrap">
+                          View <ArrowRight size={11} />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-5 border-t border-slate-800">
+              <Pagination page={page} totalPages={totalPages} total={total} pageSize={20} onPageChange={(p) => updateParam('page', String(p))} />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Create Report Modal */}
+      <Modal isOpen={createModalOpen} onClose={() => { setCreateModalOpen(false); setCreateError(''); }} title="Create Report" size="xl">
+        <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+          {createError && (
+            <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-lg px-3 py-2.5">{createError}</div>
+          )}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Case ID *</label>
+              <input
+                type="text"
+                value={formData.frc_case_id}
+                onChange={(e) => setFormData({ ...formData, frc_case_id: e.target.value })}
+                placeholder="FRC-2026-XXXXX"
+                className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Report Type *</label>
+              <select
+                value={formData.report_type}
+                onChange={(e) => setFormData({ ...formData, report_type: e.target.value as ReportType })}
+                className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              >
+                {REPORT_TYPES.map((t) => (
+                  <option key={t.value} value={t.value}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Title *</label>
+              <input
+                type="text"
+                value={formData.title}
+                onChange={(e) => setFormData({ ...formData, title: e.target.value })}
+                placeholder="Report title"
+                className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Summary *</label>
+              <textarea
+                value={formData.summary}
+                onChange={(e) => setFormData({ ...formData, summary: e.target.value })}
+                rows={3}
+                placeholder="Brief summary..."
+                className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Content</label>
+              <textarea
+                value={formData.content || ''}
+                onChange={(e) => setFormData({ ...formData, content: e.target.value })}
+                rows={5}
+                placeholder="Full report content..."
+                className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Destination</label>
+              <select
+                value={formData.destination || ''}
+                onChange={(e) => setFormData({ ...formData, destination: e.target.value })}
+                className="w-full bg-slate-800 border border-slate-700 text-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              >
+                <option value="">Select destination</option>
+                {DESTINATION_BODIES.map((d) => (
+                  <option key={d} value={d}>{d}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1.5">Legal Basis</label>
+              <input
+                type="text"
+                value={formData.legal_basis || ''}
+                onChange={(e) => setFormData({ ...formData, legal_basis: e.target.value })}
+                placeholder="e.g. POCAMLA Section 12"
+                className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500"
+              />
+            </div>
+            {legalRules.length > 0 && (
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-slate-400 mb-2">Linked Legal Rules</label>
+                <div className="max-h-32 overflow-y-auto space-y-1.5 bg-slate-800 rounded-lg p-3">
+                  {legalRules.map((rule) => (
+                    <label key={rule.rule_code} className="flex items-center gap-2 cursor-pointer hover:bg-slate-700 rounded px-2 py-1">
+                      <input
+                        type="checkbox"
+                        checked={formData.legal_rule_ids?.includes(rule.rule_code) || false}
+                        onChange={() => toggleLegalRule(rule.rule_code)}
+                        className="accent-cyan-500"
+                      />
+                      <span className="text-xs text-slate-300">
+                        <span className="font-mono text-cyan-400">{rule.rule_code}</span> — {rule.act_name}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 pt-4 border-t border-slate-800 mt-4">
+          <button onClick={() => { setCreateModalOpen(false); setCreateError(''); }} className="px-4 py-2 text-sm text-slate-400 hover:text-slate-200 transition-colors">Cancel</button>
+          <button
+            onClick={handleCreate}
+            disabled={isCreating}
+            className="px-4 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2"
+          >
+            {isCreating && <div className="h-3.5 w-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />}
+            Create Report
+          </button>
+        </div>
+      </Modal>
+    </AppLayout>
+  );
+}
+
+export default function ReportsPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-950" />}>
+      <ReportsPageContent />
+    </Suspense>
+  );
+}
