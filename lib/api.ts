@@ -68,6 +68,40 @@ export function setStoredUser(user: AuthUser): void {
   sessionStorage.setItem('frc_user', JSON.stringify(user));
 }
 
+// ─── Demo mode stub responses ─────────────────────────────────────────────────
+// When a demo token is active, return empty paginated payloads so the UI
+// renders without errors instead of hitting the real backend (which rejects
+// demo tokens with 401).
+
+const EMPTY_PAGINATED: ApiResponse<unknown> = {
+  success: true,
+  data: { items: [], cases: [], reports: [], referrals: [], institutions: [], users: [], rules: [], logs: [], total: 0, page: 1, page_size: 20, total_pages: 0 },
+};
+
+// For single-resource GETs and write operations while in demo mode, throw a
+// user-friendly message rather than a cryptic network error.
+function demoStubForPath(path: string, method: string): ApiResponse<unknown> | null {
+  const m = (method || 'GET').toUpperCase();
+  if (m !== 'GET') {
+    // Mutations are not supported in demo mode
+    throw new Error('Demo mode: write operations are disabled. Please log in with a real account to make changes.');
+  }
+  // List/paginated endpoints – return empty collection
+  if (
+    path.includes('/cases') ||
+    path.includes('/institutions') ||
+    path.includes('/reports') ||
+    path.includes('/referrals') ||
+    path.includes('/audit-logs') ||
+    path.includes('/legal/rules') ||
+    path.includes('/users')
+  ) {
+    return EMPTY_PAGINATED as ApiResponse<unknown>;
+  }
+  // Single-resource endpoint — return a stub that callers can handle
+  return null;
+}
+
 // ─── Core Fetch ───────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(
@@ -75,6 +109,15 @@ async function apiFetch<T>(
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
   const token = getToken();
+
+  // ── Demo bypass: never call the real backend with a demo token ──
+  if (token && isDemoToken(token)) {
+    const stub = demoStubForPath(path, options.method || 'GET');
+    if (stub) return stub as ApiResponse<T>;
+    // For unrecognised single-resource paths, return a safe empty success
+    return { success: true, data: null as unknown as T };
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
@@ -90,12 +133,9 @@ async function apiFetch<T>(
   });
 
   if (response.status === 401) {
-    // Don't clear demo tokens — they're locally valid
-    if (!isDemoToken(getToken() || '')) {
-      clearToken();
-      if (typeof window !== 'undefined') {
-        window.location.href = '/login';
-      }
+    clearToken();
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
     }
     throw new Error('Unauthorized');
   }
