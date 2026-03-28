@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import type { AuthUser, UserRole } from '@/types';
-import { getStoredUser, setStoredUser, getToken, setToken, clearToken, getMe, isDemoToken } from '@/lib/api';
+import { getStoredUser, setStoredUser, getToken, setToken, clearToken, getMe } from '@/lib/api';
 
 interface AuthContextValue {
   user: AuthUser | null;
@@ -32,13 +32,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const token = getToken();
     const stored = getStoredUser();
     if (token && stored) {
+      // Optimistically restore session from storage, then validate with backend
       setUser(stored);
-      // Demo tokens are locally valid — no backend validation needed
-      if (isDemoToken(token)) {
-        setIsLoading(false);
-        return;
-      }
-      // Real tokens: validate with backend in background
       getMe()
         .then((me) => {
           setUser(me);

@@ -24,17 +24,18 @@ import type {
   InstitutionStatus,
 } from '@/types';
 
-// Use the Next.js rewrite proxy when running in the browser to avoid CORS.
-// The proxy route /api/backend/* forwards server-side to Render.
-// In local dev or server-side, use the direct backend URL.
+// ─── Base URL ─────────────────────────────────────────────────────────────────
+// Browser: route through Next.js rewrite proxy (/api/backend/*) to avoid CORS.
+// Server-side: use direct backend URL via NEXT_PUBLIC_API_BASE_URL or fallback.
+
 function getBaseUrl(): string {
   if (typeof window !== 'undefined') {
-    // Browser: route through Next.js rewrite proxy (avoids CORS entirely)
     return '/api/backend';
   }
-  // Server-side / local: direct URL
-  return process.env.NEXT_PUBLIC_API_URL ||
-    'https://financial-intelligence-processing-system.onrender.com/api/v1';
+  return (
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    'https://financial-intelligence-processing-system.onrender.com/api/v1'
+  );
 }
 
 // ─── Token Management ─────────────────────────────────────────────────────────
@@ -68,40 +69,6 @@ export function setStoredUser(user: AuthUser): void {
   sessionStorage.setItem('frc_user', JSON.stringify(user));
 }
 
-// ─── Demo mode stub responses ─────────────────────────────────────────────────
-// When a demo token is active, return empty paginated payloads so the UI
-// renders without errors instead of hitting the real backend (which rejects
-// demo tokens with 401).
-
-const EMPTY_PAGINATED: ApiResponse<unknown> = {
-  success: true,
-  data: { items: [], cases: [], reports: [], referrals: [], institutions: [], users: [], rules: [], logs: [], total: 0, page: 1, page_size: 20, total_pages: 0 },
-};
-
-// For single-resource GETs and write operations while in demo mode, throw a
-// user-friendly message rather than a cryptic network error.
-function demoStubForPath(path: string, method: string): ApiResponse<unknown> | null {
-  const m = (method || 'GET').toUpperCase();
-  if (m !== 'GET') {
-    // Mutations are not supported in demo mode
-    throw new Error('Demo mode: write operations are disabled. Please log in with a real account to make changes.');
-  }
-  // List/paginated endpoints – return empty collection
-  if (
-    path.includes('/cases') ||
-    path.includes('/institutions') ||
-    path.includes('/reports') ||
-    path.includes('/referrals') ||
-    path.includes('/audit-logs') ||
-    path.includes('/legal/rules') ||
-    path.includes('/users')
-  ) {
-    return EMPTY_PAGINATED as ApiResponse<unknown>;
-  }
-  // Single-resource endpoint — return a stub that callers can handle
-  return null;
-}
-
 // ─── Core Fetch ───────────────────────────────────────────────────────────────
 
 async function apiFetch<T>(
@@ -109,15 +76,6 @@ async function apiFetch<T>(
   options: RequestInit = {}
 ): Promise<ApiResponse<T>> {
   const token = getToken();
-
-  // ── Demo bypass: never call the real backend with a demo token ──
-  if (token && isDemoToken(token)) {
-    const stub = demoStubForPath(path, options.method || 'GET');
-    if (stub) return stub as ApiResponse<T>;
-    // For unrecognised single-resource paths, return a safe empty success
-    return { success: true, data: null as unknown as T };
-  }
-
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string>),
@@ -137,87 +95,16 @@ async function apiFetch<T>(
     if (typeof window !== 'undefined') {
       window.location.href = '/login';
     }
-    throw new Error('Unauthorized');
+    throw new Error('Session expired. Please log in again.');
   }
 
   const data = await response.json();
   return data as ApiResponse<T>;
 }
 
-// ─── Demo bypass credentials ──────────────────────────────────────────────────
-// These work even when the backend DB has no users seeded yet.
-
-const DEMO_USERS: Record<string, LoginResponse> = {
-  'admin@frc.go.ke': {
-    access_token: 'demo_token_admin',
-    token_type: 'bearer',
-    expires_in: 3600,
-    user_id: 'demo-admin-001',
-    full_name: 'FRC Administrator',
-    role: 'frc_admin',
-  },
-  'analyst@frc.go.ke': {
-    access_token: 'demo_token_analyst',
-    token_type: 'bearer',
-    expires_in: 3600,
-    user_id: 'demo-analyst-001',
-    full_name: 'FRC Analyst',
-    role: 'frc_analyst',
-  },
-  'investigator@frc.go.ke': {
-    access_token: 'demo_token_investigator',
-    token_type: 'bearer',
-    expires_in: 3600,
-    user_id: 'demo-investigator-001',
-    full_name: 'FRC Investigator',
-    role: 'investigator',
-  },
-  'auditor@frc.go.ke': {
-    access_token: 'demo_token_auditor',
-    token_type: 'bearer',
-    expires_in: 3600,
-    user_id: 'demo-auditor-001',
-    full_name: 'FRC Auditor',
-    role: 'audit_viewer',
-  },
-};
-
-const DEMO_PASSWORDS: Record<string, string> = {
-  'admin@frc.go.ke': 'FRCAdmin2026!',
-  'analyst@frc.go.ke': 'FRCAnalyst2026!',
-  'investigator@frc.go.ke': 'FRCInvest2026!',
-  'auditor@frc.go.ke': 'FRCAudit2026!',
-};
-
-export function isDemoToken(token: string): boolean {
-  return token.startsWith('demo_token_');
-}
-
 // ─── Auth ─────────────────────────────────────────────────────────────────────
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  // ── Demo bypass: if backend DB has no users, use local demo session ──
-  const demoUser = DEMO_USERS[email.toLowerCase()];
-  if (demoUser && DEMO_PASSWORDS[email.toLowerCase()] === password) {
-    try {
-      // Try real backend first
-      const res = await fetch(`${getBaseUrl()}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      if (res.ok && data.access_token) return data as LoginResponse;
-      if (res.ok && data.data?.access_token) return data.data as LoginResponse;
-      // Backend rejected (no users seeded) — fall through to demo
-    } catch {
-      // Network error — fall through to demo
-    }
-    // Return demo session
-    return demoUser;
-  }
-
-  // ── Real backend login ──
   const res = await fetch(`${getBaseUrl()}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -232,20 +119,13 @@ export async function login(email: string, password: string): Promise<LoginRespo
 
   if (data.access_token) return data as LoginResponse;
   if (data.data?.access_token) return data.data as LoginResponse;
-  throw new Error('Login failed');
+  throw new Error('Login failed: unexpected response from server.');
 }
 
 export async function getMe(): Promise<AuthUser> {
-  // Demo tokens: reconstruct from stored user — no backend call needed
-  const token = getToken();
-  if (token && isDemoToken(token)) {
-    const stored = getStoredUser();
-    if (stored) return stored;
-    throw new Error('Demo session expired');
-  }
   const res = await apiFetch<AuthUser>('/auth/me');
   // Backend returns user directly (not wrapped in {success, data})
-  const payload = (res as unknown as Record<string, unknown>);
+  const payload = res as unknown as Record<string, unknown>;
   if (payload.id || payload.user_id) return res as unknown as AuthUser;
   if (!res.success) throw new Error(res.error || 'Failed to fetch user');
   return res.data;

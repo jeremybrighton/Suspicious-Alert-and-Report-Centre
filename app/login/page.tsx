@@ -2,17 +2,10 @@
 
 import { useState, FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
-import { Shield, Eye, EyeOff, AlertCircle, ChevronDown } from 'lucide-react';
+import { Shield, Eye, EyeOff, AlertCircle } from 'lucide-react';
 import { login } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import type { AuthUser } from '@/types';
-
-const DEMO_ACCOUNTS = [
-  { label: 'Admin', email: 'admin@frc.go.ke', password: 'FRCAdmin2026!', role: 'Full access' },
-  { label: 'Analyst', email: 'analyst@frc.go.ke', password: 'FRCAnalyst2026!', role: 'Cases & Reports' },
-  { label: 'Investigator', email: 'investigator@frc.go.ke', password: 'FRCInvest2026!', role: 'View only' },
-  { label: 'Auditor', email: 'auditor@frc.go.ke', password: 'FRCAudit2026!', role: 'Audit logs' },
-];
 
 export default function LoginPage() {
   const router = useRouter();
@@ -22,7 +15,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  const [showDemo, setShowDemo] = useState(false);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,13 +39,6 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const fillDemo = (acc: typeof DEMO_ACCOUNTS[0]) => {
-    setEmail(acc.email);
-    setPassword(acc.password);
-    setShowDemo(false);
-    setError('');
   };
 
   return (
@@ -138,34 +123,6 @@ export default function LoginPage() {
               )}
             </button>
           </form>
-
-          {/* Demo accounts selector */}
-          <div className="mt-5 pt-5 border-t border-slate-800">
-            <button
-              type="button"
-              onClick={() => setShowDemo(!showDemo)}
-              className="w-full flex items-center justify-between text-sm text-slate-400 hover:text-slate-200 transition-colors"
-            >
-              <span>Use a demo account</span>
-              <ChevronDown size={14} className={`transition-transform ${showDemo ? 'rotate-180' : ''}`} />
-            </button>
-
-            {showDemo && (
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {DEMO_ACCOUNTS.map((acc) => (
-                  <button
-                    key={acc.email}
-                    type="button"
-                    onClick={() => fillDemo(acc)}
-                    className="text-left p-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-cyan-700 rounded-xl transition-all"
-                  >
-                    <p className="text-xs font-semibold text-cyan-400">{acc.label}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">{acc.role}</p>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
 
         {/* Footer */}

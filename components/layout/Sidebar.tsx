@@ -13,10 +13,8 @@ import {
   Users,
   LogOut,
   Shield,
-  FlaskConical,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { getToken, isDemoToken } from '@/lib/api';
 import type { UserRole } from '@/types';
 
 interface NavItem {
@@ -87,7 +85,6 @@ const ROLE_LABELS: Record<UserRole, string> = {
 export default function Sidebar() {
   const pathname = usePathname();
   const { user, signOut, hasRole } = useAuth();
-  const isDemo = typeof window !== 'undefined' && isDemoToken(getToken() || '');
 
   const visibleItems = NAV_ITEMS.filter((item) => hasRole(item.roles));
 
@@ -126,19 +123,6 @@ export default function Sidebar() {
           );
         })}
       </nav>
-
-      {/* Demo mode banner */}
-      {isDemo && (
-        <div className="mx-3 mb-2 px-3 py-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-start gap-2">
-          <FlaskConical size={14} className="text-amber-400 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-xs font-semibold text-amber-400">Demo Mode</p>
-            <p className="text-xs text-amber-400/70 mt-0.5 leading-tight">
-              No live data. Sign in with a real account to access the full system.
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* User Info + Sign Out */}
       <div className="px-4 py-4 border-t border-slate-800">
