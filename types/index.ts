@@ -92,9 +92,13 @@ export interface CreateInstitutionBody {
 export type CaseStatus =
   | 'received'
   | 'under_review'
+  | 'investigating'
   | 'report_generated'
   | 'referred'
-  | 'closed';
+  | 'cleared_as_legal'
+  | 'archived'
+  | 'closed'
+  | 'deleted';
 
 export type CasePriority = 'low' | 'medium' | 'high' | 'critical';
 

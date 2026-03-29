@@ -13,17 +13,24 @@ import {
   ChevronDown,
   CheckCircle2,
   Edit2,
+  Trash2,
+  Archive,
 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { PageLoader } from '@/components/ui/Spinner';
 import ErrorState from '@/components/ui/ErrorState';
 import { CaseStatusBadge, PriorityBadge, ReportStatusBadge, ReferralStatusBadge } from '@/components/ui/Badge';
 import Modal from '@/components/ui/Modal';
-import { getCaseById, patchCaseStatus, updateCase, getReportsByCase, getReferrals } from '@/lib/api';
+import { getCaseById, patchCaseStatus, updateCase, deleteCase, getReportsByCase, getReferrals } from '@/lib/api';
 import { useAuth } from '@/context/AuthContext';
 import type { FRCCase, CaseStatus, Report, Referral } from '@/types';
+import { useRouter } from 'next/navigation';
 
-const STATUS_FLOW: CaseStatus[] = ['received', 'under_review', 'report_generated', 'referred', 'closed'];
+const STATUS_FLOW: CaseStatus[] = [
+  'received', 'under_review', 'investigating',
+  'report_generated', 'referred',
+  'cleared_as_legal', 'archived', 'closed',
+];
 
 function DetailSection({ title, icon, children }: { title: string; icon: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -49,7 +56,9 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
 export default function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { hasRole } = useAuth();
+  const router = useRouter();
   const canEdit = hasRole(['frc_admin', 'frc_analyst']);
+  const isAdmin = hasRole(['frc_admin']);
 
   const [caseData, setCaseData] = useState<FRCCase | null>(null);
   const [reports, setReports] = useState<Report[]>([]);
@@ -61,11 +70,16 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
   const [statusModalOpen, setStatusModalOpen] = useState(false);
   const [newStatus, setNewStatus] = useState<CaseStatus>('received');
   const [statusUpdating, setStatusUpdating] = useState(false);
+  const [statusNotes, setStatusNotes] = useState('');
 
   // Notes update modal
   const [notesModalOpen, setNotesModalOpen] = useState(false);
   const [analystNotes, setAnalystNotes] = useState('');
   const [notesUpdating, setNotesUpdating] = useState(false);
+
+  // Delete / clear action
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [actionMsg, setActionMsg] = useState('');
 
   const loadCase = async () => {
     setIsLoading(true);
@@ -97,11 +111,12 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
     if (!caseData) return;
     setStatusUpdating(true);
     try {
-      const updated = await patchCaseStatus(id, newStatus);
+      const updated = await patchCaseStatus(id, newStatus, statusNotes || undefined);
       setCaseData(updated);
       setStatusModalOpen(false);
-    } catch {
-      // silently fail — show toast in full impl
+      setStatusNotes('');
+    } catch (err: unknown) {
+      setActionMsg(`✗ ${err instanceof Error ? err.message : 'Status update failed'}`);
     } finally {
       setStatusUpdating(false);
     }
@@ -117,6 +132,34 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
       // silently fail
     } finally {
       setNotesUpdating(false);
+    }
+  };
+
+  const handleClearAsLegal = async () => {
+    if (!window.confirm('Mark this case as Cleared as Legal? This records that the transaction was investigated and found to be lawful.')) return;
+    setDeleteLoading(true);
+    try {
+      const updated = await patchCaseStatus(id, 'cleared_as_legal', 'Case investigated and found to be lawful.');
+      setCaseData(updated);
+      setActionMsg('✓ Case marked as Cleared as Legal');
+    } catch (err: unknown) {
+      setActionMsg(`✗ ${err instanceof Error ? err.message : 'Action failed'}`);
+    } finally {
+      setDeleteLoading(false);
+      setTimeout(() => setActionMsg(''), 5000);
+    }
+  };
+
+  const handleDeleteCase = async () => {
+    if (!window.confirm('Soft-delete this case? It will be hidden from the default view but the audit trail is preserved.')) return;
+    setDeleteLoading(true);
+    try {
+      await deleteCase(id);
+      setActionMsg('✓ Case deleted');
+      setTimeout(() => router.push('/cases'), 1500);
+    } catch (err: unknown) {
+      setActionMsg(`✗ ${err instanceof Error ? err.message : 'Delete failed'}`);
+      setDeleteLoading(false);
     }
   };
 
@@ -150,23 +193,69 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
                 <h2 className="text-white font-mono font-semibold">{caseData.frc_case_id}</h2>
               </div>
             </div>
-            {canEdit && (
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {canEdit && (
+                <>
+                  <button
+                    onClick={() => setNotesModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-all"
+                  >
+                    <Edit2 size={14} /> Notes
+                  </button>
+                  <button
+                    onClick={() => setStatusModalOpen(true)}
+                    className="flex items-center gap-1.5 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-all"
+                  >
+                    <ChevronDown size={14} /> Update Status
+                  </button>
+                </>
+              )}
+              {/* Clear as Legal — any editor */}
+              {canEdit && caseData.status !== 'cleared_as_legal' && caseData.status !== 'deleted' && (
                 <button
-                  onClick={() => setNotesModalOpen(true)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-all"
+                  onClick={handleClearAsLegal}
+                  disabled={deleteLoading}
+                  title="Mark as cleared — investigated and found to be lawful"
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 rounded-lg border border-emerald-500/30 transition-all disabled:opacity-50"
                 >
-                  <Edit2 size={14} /> Edit Notes
+                  <CheckCircle2 size={14} /> Clear as Legal
                 </button>
+              )}
+              {/* Archive — any editor */}
+              {canEdit && !['archived', 'deleted'].includes(caseData.status) && (
                 <button
-                  onClick={() => setStatusModalOpen(true)}
-                  className="flex items-center gap-2 px-3 py-2 text-sm bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg transition-all"
+                  onClick={() => {
+                    if (window.confirm('Archive this case?')) {
+                      patchCaseStatus(id, 'archived').then(setCaseData).catch((e: Error) => setActionMsg(`✗ ${e.message}`));
+                    }
+                  }}
+                  disabled={deleteLoading}
+                  title="Move to archive"
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-slate-800 hover:bg-amber-500/10 text-slate-400 hover:text-amber-400 rounded-lg border border-slate-700 hover:border-amber-500/30 transition-all disabled:opacity-50"
                 >
-                  <ChevronDown size={14} /> Update Status
+                  <Archive size={14} /> Archive
                 </button>
-              </div>
-            )}
+              )}
+              {/* Delete — admin only */}
+              {isAdmin && caseData.status !== 'deleted' && (
+                <button
+                  onClick={handleDeleteCase}
+                  disabled={deleteLoading}
+                  title="Soft-delete this case (admin only)"
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg border border-red-500/20 transition-all disabled:opacity-50"
+                >
+                  <Trash2 size={14} /> Delete
+                </button>
+              )}
+            </div>
           </div>
+
+          {/* Action feedback */}
+          {actionMsg && (
+            <div className={`px-4 py-2.5 rounded-lg border text-sm ${actionMsg.startsWith('✓') ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+              {actionMsg}
+            </div>
+          )}
 
           {/* Status progress bar */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
@@ -397,7 +486,15 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
             {STATUS_FLOW.map((s) => (
               <option key={s} value={s}>{s.replace(/_/g, ' ')}</option>
             ))}
+            {isAdmin && <option value="deleted">deleted (admin only)</option>}
           </select>
+          <textarea
+            value={statusNotes}
+            onChange={(e) => setStatusNotes(e.target.value)}
+            rows={2}
+            placeholder="Optional notes for this status change..."
+            className="w-full bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-3 py-2 text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500 resize-none"
+          />
           <div className="flex justify-end gap-2 pt-2">
             <button
               onClick={() => setStatusModalOpen(false)}

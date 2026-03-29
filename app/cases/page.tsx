@@ -3,21 +3,28 @@
 import { useEffect, useState, useCallback, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Search, Filter, ArrowRight } from 'lucide-react';
+import { Search, Filter, ArrowRight, Archive, CheckCircle2, Trash2 } from 'lucide-react';
 import AppLayout from '@/components/layout/AppLayout';
 import { PageLoader } from '@/components/ui/Spinner';
 import ErrorState from '@/components/ui/ErrorState';
 import EmptyState from '@/components/ui/EmptyState';
 import { CaseStatusBadge, PriorityBadge } from '@/components/ui/Badge';
 import Pagination from '@/components/ui/Pagination';
-import { getCases } from '@/lib/api';
-import type { FRCCase } from '@/types';
+import { getCases, bulkCaseAction } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
+import type { FRCCase, CaseStatus } from '@/types';
 
-const STATUS_OPTIONS = ['', 'received', 'under_review', 'report_generated', 'referred', 'closed'];
+const STATUS_OPTIONS = [
+  '', 'received', 'under_review', 'investigating',
+  'report_generated', 'referred',
+  'cleared_as_legal', 'archived', 'closed', 'deleted',
+];
 const PRIORITY_OPTIONS = ['', 'low', 'medium', 'high', 'critical'];
 const REPORT_TYPE_OPTIONS = ['', 'suspicious_activity_report', 'regulatory_threshold_report'];
 
 function CasesPageContent() {
+  const { hasRole } = useAuth();
+  const isAdmin = hasRole(['frc_admin']);
   const searchParams = useSearchParams();
   const router = useRouter();
 
@@ -62,6 +69,28 @@ function CasesPageContent() {
   useEffect(() => {
     loadCases();
   }, [loadCases]);
+
+  const [bulkMsg, setBulkMsg] = useState('');
+  const [bulkLoading, setBulkLoading] = useState(false);
+
+  const handleBulkAction = async (
+    action: 'archive' | 'delete' | 'set_status',
+    opts: { filter_status?: string; new_status?: CaseStatus; label: string },
+  ) => {
+    if (!window.confirm(`${opts.label} — are you sure?`)) return;
+    setBulkLoading(true);
+    setBulkMsg('');
+    try {
+      const res = await bulkCaseAction({ action, filter_status: opts.filter_status, new_status: opts.new_status });
+      setBulkMsg(`✓ ${res.message}`);
+      await loadCases();
+    } catch (err: unknown) {
+      setBulkMsg(`✗ ${err instanceof Error ? err.message : 'Bulk action failed'}`);
+    } finally {
+      setBulkLoading(false);
+      setTimeout(() => setBulkMsg(''), 7000);
+    }
+  };
 
   const updateParam = (key: string, value: string) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -127,12 +156,48 @@ function CasesPageContent() {
           </div>
         </div>
 
-        {/* Results count */}
+        {/* Bulk action feedback */}
+        {bulkMsg && (
+          <div className={`px-4 py-2.5 rounded-lg border text-sm ${bulkMsg.startsWith('✓') ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-red-500/10 border-red-500/20 text-red-400'}`}>
+            {bulkMsg}
+          </div>
+        )}
+
+        {/* Results count + Admin Bulk Actions */}
         {!isLoading && !error && (
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <p className="text-sm text-slate-400">
               <span className="text-slate-200 font-medium">{total}</span> case{total !== 1 ? 's' : ''} found
             </p>
+            {isAdmin && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Admin bulk:</span>
+                <button
+                  onClick={() => handleBulkAction('set_status', { filter_status: 'received', new_status: 'cleared_as_legal', label: 'Mark all received cases as Cleared as Legal' })}
+                  disabled={bulkLoading}
+                  title="Mark all 'received' cases as cleared as legal"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-emerald-400 hover:border-emerald-500/30 hover:bg-emerald-500/10 transition-all disabled:opacity-50"
+                >
+                  <CheckCircle2 size={12} /> Clear as legal
+                </button>
+                <button
+                  onClick={() => handleBulkAction('archive', { label: 'Archive ALL closed cases' })}
+                  disabled={bulkLoading}
+                  title="Archive all closed cases"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-amber-400 hover:border-amber-500/30 hover:bg-amber-500/10 transition-all disabled:opacity-50"
+                >
+                  <Archive size={12} /> Archive closed
+                </button>
+                <button
+                  onClick={() => handleBulkAction('delete', { label: 'Soft-delete ALL visible cases — this hides them from the default view' })}
+                  disabled={bulkLoading}
+                  title="Soft-delete all visible cases"
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-slate-800 border border-slate-700 text-slate-300 hover:text-red-400 hover:border-red-500/30 hover:bg-red-500/10 transition-all disabled:opacity-50"
+                >
+                  <Trash2 size={12} /> Delete all
+                </button>
+              </div>
+            )}
           </div>
         )}
 

@@ -247,10 +247,14 @@ export async function getCaseById(frc_case_id: string): Promise<FRCCase> {
   return res.data;
 }
 
-export async function patchCaseStatus(frc_case_id: string, status: CaseStatus): Promise<FRCCase> {
+export async function patchCaseStatus(
+  frc_case_id: string,
+  status: CaseStatus,
+  notes?: string,
+): Promise<FRCCase> {
   const res = await apiFetch<FRCCase>(`/cases/${frc_case_id}/status`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify({ status, notes }),
   });
   if (!res.success) throw new Error(res.error || 'Failed to update case status');
   return res.data;
@@ -262,6 +266,36 @@ export async function updateCase(frc_case_id: string, body: UpdateCaseBody): Pro
     body: JSON.stringify(body),
   });
   if (!res.success) throw new Error(res.error || 'Failed to update case');
+  return res.data;
+}
+
+export async function deleteCase(frc_case_id: string): Promise<{ message: string }> {
+  const res = await apiFetch<{ message: string }>(`/cases/${frc_case_id}`, {
+    method: 'DELETE',
+  });
+  if (!res.success) throw new Error(res.error || 'Failed to delete case');
+  return res.data;
+}
+
+export interface BulkActionResult {
+  action: string;
+  target_status: string;
+  cases_affected: number;
+  message: string;
+}
+
+export async function bulkCaseAction(params: {
+  action: 'set_status' | 'archive' | 'delete';
+  case_ids?: string[];
+  filter_status?: string;
+  new_status?: CaseStatus;
+  notes?: string;
+}): Promise<BulkActionResult> {
+  const res = await apiFetch<BulkActionResult>('/cases/bulk-action', {
+    method: 'POST',
+    body: JSON.stringify(params),
+  });
+  if (!res.success) throw new Error(res.error || 'Bulk action failed');
   return res.data;
 }
 

@@ -30,13 +30,18 @@ export default function Badge({ children, variant = 'default', className = '' }:
 
 export function CaseStatusBadge({ status }: { status: string }) {
   const map: Record<string, BadgeVariant> = {
-    received: 'cyan',
-    under_review: 'warning',
+    received:         'cyan',
+    under_review:     'warning',
+    investigating:    'warning',
     report_generated: 'purple',
-    referred: 'info',
-    closed: 'success',
+    referred:         'info',
+    cleared_as_legal: 'success',
+    archived:         'default',
+    closed:           'success',
+    deleted:          'danger',
   };
-  return <Badge variant={map[status] || 'default'}>{status.replace('_', ' ')}</Badge>;
+  const label = status.replace(/_/g, ' ');
+  return <Badge variant={map[status] || 'default'}>{label}</Badge>;
 }
 
 export function ReportStatusBadge({ status }: { status: string }) {
